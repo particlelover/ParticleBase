@@ -23,7 +23,8 @@ void createInitialState(CUDAenv<GaussianThermo> &particles) {
   std::mt19937 engine;
 
   const real kB = 8.3145e-7;  // kB in \AA, fs, g/NA unit
-  real cell[6] = {0.0, 300.0, 0.0, 300.0, 0.0, 120.0};
+  // rmax = 20.0, thickness = 0.8 requires block size 20.8; 
+  real cell[6] = {0.0, 312.0, 0.0, 312.0, 0.0, 312.0};
   const double rho = 0.00748;
   uint32_t N = static_cast<uint32_t>(((cell[1]-cell[0])*(cell[3]-cell[2])*(cell[5]-cell[4])) * rho);
   const real Temp = 311;
@@ -89,6 +90,12 @@ void createInitialState(CUDAenv<GaussianThermo> &particles) {
     particles[i].kB = kB;
     particles[i].timestep = 0;
     particles[i].rmax2 = 20*20;
+    particles[i].useNList();
+    /* from the Maxwell-Boltzmann distribution, \f$ <v> = \sqrt {\frac{8k_B T}{\pi m} }\f$
+     * v_ave = Math.sqrt((8 * 8.3145e-7 * 311) / (3.14 * 44.01)) = 0.0038690358024039089145
+     * 2 * v_ave * 100steps(=fs) = 0.0038690358024039089145 * 200 = 0.7738071604807818 \AA
+     */
+    particles[i].thickness = 0.8;
   }
 }
 
@@ -127,7 +134,7 @@ int main(int argc, char **argv) {
 #pragma omp parallel for
     for (int i=0;i<ndev;++i) {
       particles.setGPU(i);
-      particles[i].setupCutoffBlock(20.0);
+      particles[i].setupCutoffBlock(20.8);
       particles[i].calcBlockID();
 #if defined(MVSTAT)
       particles[i].statMV2(mvstat);
@@ -152,11 +159,12 @@ int main(int argc, char **argv) {
 
   const real delta_t = 1.0;
   const uint32_t stepnum =
-    static_cast<uint32_t>(80000 / delta_t); //80.0ps
+    static_cast<uint32_t>(5000 / delta_t); //5.0ps
   const uint32_t ointerval =
     static_cast<uint32_t>(100 / delta_t); // 100fs
   const uint32_t initstep = particles[0].timestep;
 
+  const uint32_t neighborListInterval = 100;
 
   // MAIN LOOP
   std::cerr << "start main loop" << std::endl;
@@ -166,7 +174,10 @@ int main(int argc, char **argv) {
 #pragma omp for
     for (int i=0;i<ndev;++i) {
       particles.setGPU(i);
-      particles[i].calcBlockID();
+      if (j%neighborListInterval==0) {
+        particles[i].calcBlockID();
+        particles[i].makeNList();
+      }
 
       particles[i].calcForce();
     }
@@ -200,6 +211,13 @@ int main(int argc, char **argv) {
       particles[i].treatPeriodicCondition();
     }
 
+    // calculate/put energy
+#pragma omp master
+    if ((j+1)%25==0) {
+      std::cerr << "K-P\t" << 
+      particles[0].calcKineticE() << "\t" << particles[0].calcPotentialE() << std::endl;
+    }
+
 #pragma omp master
     if ((j+1)%ointerval==0) {
       particles[0].timestep = j+1+initstep;
@@ -216,7 +234,7 @@ int main(int argc, char **argv) {
   mvstat.close();
 #endif
 
-  particles.writeSerialization("MD4done");
+  particles.writeSerialization("MD_CO2done");
 
   return 0;
 }

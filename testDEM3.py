@@ -5,9 +5,9 @@ import cudaParticles
 if __name__ == "__main__":
     particles = cudaParticles.CudaParticleDEM()
     ndev = particles.nDevices()
-    
+
     if len(sys.argv) == 2:
-	print "reading serialization file ", sys.argv[1]
+        print "reading serialization file ", sys.argv[1]
         particles.setup()
 
         particles.readSerialization(sys.argv[1])
@@ -16,7 +16,7 @@ if __name__ == "__main__":
         sys.exit()
 
 
-    
+
     ## calculate densities for the first output
     particles[0].calcBlockID()
 
@@ -35,7 +35,7 @@ if __name__ == "__main__":
     particles[0].calcVinit(deltaT)
 
     for j in range(stepmax):
-        print >> sys.stderr, j, 
+        print >> sys.stderr, j,
         particles[0].calcBlockID()
 
 
@@ -52,6 +52,6 @@ if __name__ == "__main__":
             particles[0].getPosition()
             particles[0].putTMP()
 
-  
+
     particles.writeSerialization(sys.argv[1])
     print "Done."

@@ -5,10 +5,13 @@
 
 /** intermediate class which implements Leap-Frog time evolution
  *
+ *  @author  Shun Suzuki
+ *  @date    2012 Mar.
+ *  @version @$Id:$
  */
-class cudaParticleLF : public virtual cudaParticleBase
-{
+class cudaParticleLF : public virtual cudaParticleBase {
 protected:
+
 public:
   /** calculates \f$ v(0-\Delta t/2) \f$ from F(0) and v(0); F(0) is also calculated from calcForce()
    *
@@ -16,7 +19,7 @@ public:
    * v(-{\Delta t}/2) = v(0) - {\Delta t/}/2 F(0)/m
    * \f]
    *
-   * @param dt	Delta_t
+   * @param dt  Delta_t
    */
   void calcVinit(real dt);
 
@@ -30,10 +33,10 @@ public:
    *
    * \f}
    *
-   * @param dt	Delta_t
+   * @param dt  Delta_t
    */
   void TimeEvolution(real dt);
-
+  
   /** rollback the position and velocity from t+dt to t-dt
    *
    */
@@ -45,18 +48,16 @@ private:
   BOOST_SERIALIZATION_SPLIT_MEMBER()
 #endif
 
-  template <class Archive>
-  void save(Archive &ar, const uint32_t version) const
-  {
+  template<class Archive>
+  void save(Archive& ar, const uint32_t version) const {
     ar << boost::serialization::make_nvp("particleBase",
-                                         boost::serialization::base_object<cudaParticleBase>(*this));
+          boost::serialization::base_object<cudaParticleBase>(*this));
   }
 
-  template <class Archive>
-  void load(Archive &ar, const uint32_t version)
-  {
+  template<class Archive>
+  void load(Archive& ar, const uint32_t version) {
     ar >> boost::serialization::make_nvp("particleBase",
-                                         boost::serialization::base_object<cudaParticleBase>(*this));
+          boost::serialization::base_object<cudaParticleBase>(*this));
   }
 };
 

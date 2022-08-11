@@ -1,12 +1,10 @@
 #include <iostream>
 #include "CUDAenv.hh"
 #include "cudaParticleSPH_NS.hh"
+#include "AdaptiveTime.hh"
 #include <fstream>
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
-
-
-#define SPH_H 0.5
 
 typedef std::vector<class ParticleBase> GlobalTable;
 
@@ -22,39 +20,68 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
    * time: s
    */
 
-  /* 40x10x40cm box for L-shaped
-   * border thickness SPH_H*4 = 0.292*4=1.168
-   * plus additional space for 1sphere width
-   * 2.168 + inner + 2.168 for each axis
-   */
-  real cell[6] = {-(SPH_H)*5, 50.0+(SPH_H)*5, -(SPH_H)*5, 8.0+(SPH_H)*5, -(SPH_H)*5, 50.0+(SPH_H)*5};
-  const double lunit = (SPH_H)*0.5938629;
+  const double sph_h = 0.5;
+  const double lunit = sph_h * 0.5938629;
 
-  const double rho_0 = 20.0 / (4.0/3.0*M_PI*(SPH_H)*(SPH_H)*(SPH_H));
+  real cell[6] = {0, 20, 0, 20, 0, 10};
+
+  const double rho_0 = 20.0 / (4.0/3.0*M_PI*(sph_h)*(sph_h)*(sph_h));
   const double m_0 = 1.0 / rho_0;
-    // 0.9799 for 20m/(4/3 pi1.7^3)=1.0g/cm^3
+  // 0.9799 for 20m/(4/3 pi1.7^3)=1.0g/cm^3
 
-  std::cerr << "SPH kernel h = " << (SPH_H)
+  std::cerr << "SPH kernel h = " << (sph_h)
             << " lunit = " << lunit
             << " mean number density = " << rho_0
             << std::endl;
 
-  // 50x8x50 L-shaped
-
-  const double lunit_h = lunit / 2;
-  const signed int L1 = 50 / lunit;
-  const signed int L2 = 8  / lunit;
-  const signed int L3 = 50 / lunit;
 
   GlobalTable G1;
-  for (int i=1;i<L1;++i)
-    for (int j=1;j<L2+1;++j)
-      for (int k=1;k<L2+1;++k) {
+  const signed int L1 = 20 / lunit - 1;
+  const signed int L2 = 20 / lunit - 1;
+  const signed int L3 = 10 / lunit - 1;
+  const double lunit_h = lunit / 2;
+
+  /*
+   * border: 20x20x10 cm box
+   */
+  for (int i=0;i<L3;++i)
+    for (int j=0;j<L2;++j)
+      for (int k=0;k<L1;++k) {
+        // i: Z, j: Y, k: X
+        if (
+          (i==0) || // floor
+          ((j==0)||(j==L2-1)||(k==0)||(k==L1-1)) || // wall
+          ((j==L2/2) && (i< std::min((-2.0*k + L3*3.0), (double)L3))) // wall2
+        ) {
+          for (int l=0;l<2;++l) { // two border particles set on same position
+            ParticleBase pb;
+            pb.r[0] = k*lunit+lunit_h;
+            pb.r[1] = j*lunit+lunit_h;
+            pb.r[2] = i*lunit+lunit_h;
+            pb.m = m_0*2.5; // x2.5 by water
+            pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
+            pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
+            pb.isFixed = true;
+            pb.type = 1;
+            G1.push_back(pb);              
+          }
+        }
+      }
+  uint32_t N1=G1.size();
+  std::cerr << "N= " << N1 << std::endl;  
+
+
+  /*
+   * fluid particles
+   */
+  for (int i=2;i<L3;++i)
+    for (int j=L2/2+2;j<L2-1;++j)
+      for (int k=2;k<L3;++k) {
         // i: Z, j: Y, k: X
         ParticleBase pb;
-        pb.r[0] = k*lunit+lunit_h;
-        pb.r[1] = j*lunit+lunit_h;
-        pb.r[2] = i*lunit+lunit_h;
+        pb.r[0] = k*lunit;
+        pb.r[1] = j*lunit;
+        pb.r[2] = i*lunit;
         pb.m = m_0; // 21m/(4/3 pi0.5^3)=1.0g/cm^3
         pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
         pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
@@ -62,44 +89,14 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
         pb.type = 0;
         G1.push_back(pb);
       }
-  uint32_t N1=G1.size();
-  std::cerr << "N= " << N1 << std::endl;
-
-
-  // border
-  for (int i=-2;i<L1+4;++i)
-    for (int j=-2;j<L2+4;++j)
-      for (int k=-2;k<L3+4;++k) {
-        // i: Z, j: Y, k: X
-        if (
-          (i<0) ||
-          ((L2+1<i)&&(i<L2+4)&&(L2+1<k)) ||
-          ((j<0)&&((k<L2+4)||(i<L2+4))) ||
-          ((L2+1<j)&&((k<L2+4)||(i<L2+4))) ||
-          (k<0) ||
-          (((L2+1<k)&&(k<L2+4))&&(L2+1<i)) ||
-          ((L3+1<k)&&(i<L2+4))
-          ) {
-          ParticleBase pb;
-          pb.r[0] = k*lunit+lunit_h;
-          pb.r[1] = j*lunit+lunit_h;
-          pb.r[2] = i*lunit+lunit_h;
-          pb.m = m_0*2.5;   // x2.5 by water
-          pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
-          pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
-          pb.isFixed = true;
-          pb.type = 1;
-          G1.push_back(pb);
-        }
-      }
   uint32_t N = G1.size();
   std::cerr << "N= " << N << std::endl;
 
 
   std::valarray<real> mu(8.9e-3, N);
-  mu[std::slice(N1, N-N1, 1)] = 1.0e5;
+  mu[std::slice(0, N1, 1)] = 1.0e5;
   std::valarray<real> c1(1.5e3/2, N);   //1500m/s = 1.5e5 cm/s for water
-  c1[std::slice(N1, N-N1, 1)] = 5.44e3/2; // 5440m/s for glass
+  c1[std::slice(0, N1, 1)] = 5.44e3/2;  // 5440m/s for glass
 
   const int ndev = particles.nDevices();
   particles.setup();
@@ -110,15 +107,15 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
     particles[i].setCell(cell);
     particles[i].import(G1);
     particles[i].timestep = 0;
-    particles[i].setSPHProperties(mu, c1, (SPH_H));
-    particles[i].setupCutoffBlock((SPH_H), false);
+    particles[i].setSPHProperties(mu, c1, (sph_h));
+    particles[i].setupCutoffBlock((sph_h), false);
   }
   std::cerr << "setup done" << std::endl;
 
 
   // putTMPselected
-  particles[0].setupSelectedTMP(0, N1, N1, N-N1);
-  particles[0].putUnSelected("dump.SPH4box");
+  particles[0].setupSelectedTMP(N1, N-N1, 0, N1);
+  particles[0].putUnSelected("dump.SPH5box");
 }
 
 
@@ -160,23 +157,45 @@ int main(int argc, char **argv) {
   particles[0].getSelectedTypeID();
   particles[0].getSelectedPosition();
   particles[0].putTMP(std::cout);
+  particles[0].waitPutTMP();
 
-  const real deltaT = 0.000050;
-  const uint32_t stepmax = 0.50 / deltaT;
-  const uint32_t intaval  = 0.00200 / deltaT;
+  const real stepmax = 0.50;
+  const real intaval  = 0.00200;
   const uint32_t initstep = particles[0].timestep;
+  const real initDeltaT = 0.000050;
+  const real ulim = 0.01 * 4;
+  const real llim = ulim / 16.0;
+  const real R0 = 0.50;
+  std::vector<int> res(ndev);
+
 
 #pragma omp parallel num_threads(ndev)
 {
+  AdaptiveTime<CUDAenv<cudaParticleSPH_NS>> thistime;
+  real nextoutput = intaval;
+  thistime.init(initDeltaT);
+  thistime.statOutput = true;
+
+#pragma omp master
+  {
+    thistime.PrintStat();
+    std::cerr << "End Time: " << stepmax << std::endl;
+  }
+
 #pragma omp for
   for (int i=0;i<ndev;++i) {
     particles.setGPU(i);
-    particles[i].calcVinit(deltaT);
+    particles[i].calcVinit(initDeltaT);
   }
 
-  for (uint32_t j=0;j<stepmax;++j) {
+  uint32_t j = 0;
+
+  while (thistime() < stepmax) {
 #pragma omp master
     {
+      if (thistime.isRollbacking()) {
+        std::cerr << "now rollbacking:" << std::flush;
+      }
       std::cerr << j << " ";
     }
 #pragma omp for
@@ -188,7 +207,6 @@ int main(int argc, char **argv) {
       particles[i].calcKernels();   // do nothing
       particles[i].calcDensity(true); // calc mass density field and its reciprocal 1/rho
     }
-
     if (ndev>1) {
       particles.exchangeForceSelected(ExchangeMode::density); // exchange density
     }
@@ -202,7 +220,6 @@ int main(int argc, char **argv) {
       particles[i].calcAcceleration(true);
       particles[i].getExchangePidRange2();  // obtain pid range [p3, p4)
     }
-
     if (ndev>1) {
       particles.exchangeForceSelected(ExchangeMode::acceleration); // exchange acceleration
     }
@@ -212,21 +229,41 @@ int main(int argc, char **argv) {
       //particles.setGPU(i);
       particles[i].RestoreAcceleration();
       particles[i].addAccelerationZ(-9.8e2);
-      particles[i].TimeEvolution(deltaT);
+      particles[i].TimeEvolution(thistime.currentDeltaT());
+
+      real _r=0.0;
+      uint32_t _r1 = 0;
+      res[i] = particles[i].inspectVelocity((2*R0)/thistime.currentDeltaT(), ulim, llim, _r, _r1);
+      //std::cerr << "TimeMesh: " << thistime << " " << deltaT << "\t" << _r
+      //  << "\t" << _r * ((2*R0)/deltaT) << "\t" << _r1 << std::endl;
+    }
+
+    // progress simulation time
+    j = thistime.Progress(particles, res, j);
+
+#pragma omp for
+    for (int i=0;i<ndev;++i) {
       particles[i].treatAbsoluteCondition();
     }
 
 #pragma omp master
-    if ((j+1)%intaval==0) {
-      std::cerr << std::endl << "(" << (j+1)*deltaT << ") ";
-      particles[0].timestep = j+1+initstep;
+    if (thistime() >= nextoutput) {
+      std::cerr << std::endl
+            << "(" << thistime() << ") ";
+      nextoutput += intaval;
+      particles[0].timestep = j + 1 + initstep;
       particles[0].getSelectedPosition();
       particles[0].putTMP(std::cout);
     }
   }
+  #pragma omp master
+  {
+    particles[0].waitPutTMP();
+    thistime.PrintStat(j);
+  }
 }
 
-  std::ofstream ofs("SPH4done");
+  std::ofstream ofs("SPH5done");
   boost::archive::binary_oarchive oa(ofs);
   oa << boost::serialization::make_nvp("cudaParticles", particles[0]);
   ofs.close();

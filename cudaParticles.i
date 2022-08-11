@@ -13,9 +13,6 @@
 #include "putTMPselected.hh"
 #include "cudaCutoffBlock.hh"
 #include "cudaSelectedBlock.hh"
-#include "cudaParticleVV.hh"
-#include "cudaParticleMD.hh"
-#include "GaussianThermo.hh"
 #include "cudaParticleLF.hh"
 #include "cudaParticleRotation.hh"
 #include "cudaParticleSPHBase.hh"
@@ -31,9 +28,6 @@
 %include "putTMPselected.hh"
 %include "cudaCutoffBlock.hh"
 %include "cudaSelectedBlock.hh"
-%include "cudaParticleVV.hh"
-%include "cudaParticleMD.hh"
-%include "GaussianThermo.hh"
 %include "cudaParticleLF.hh"
 %include "cudaParticleRotation.hh"
 %include "cudaParticleSPHBase.hh"
@@ -44,29 +38,16 @@
 %include "AdaptiveTime.hh"
 
 %include "CUDAenv.hh"
-%template (CudaParticleMD) CUDAenv<cudaParticleMD>;
-%template (GaussianThermoMD) CUDAenv<GaussianThermo>;
 %template (CudaParticleSPH_NS) CUDAenv<cudaParticleSPH_NS>;
 %template (CudaParticleDEM) CUDAenv<cudaParticleDEM>;
+
 %template (AdaptiveTimeDEM) AdaptiveTime<CUDAenv<cudaParticleDEM> >;
 
 %template (globalTable) std::vector<ParticleBase>;
 
 %array_functions(real, realArray)
 %template (VectorInt) std::vector<int>;
-%template (VectorReal) std::vector<real>;
 
-
-%extend CUDAenv<cudaParticleMD> {
-    cudaParticleMD & __getitem__(int i) {
-            return (self->operator[](i));
-    }
-};
-%extend CUDAenv<GaussianThermo> {
-    GaussianThermo & __getitem__(int i) {
-            return (self->operator[](i));
-    }
-};
 %extend CUDAenv<cudaParticleSPH_NS> {
     cudaParticleSPH_NS & __getitem__(int i) {
             return (self->operator[](i));

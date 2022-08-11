@@ -1,0 +1,6 @@
+
+set xlabel "t"
+set ylabel "{/Symbol D}t"
+set sty dat steps
+set log y
+plot "< awk -F: '/Delta/{print($2, $4)}' ".ARG1 t ARG1

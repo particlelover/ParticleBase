@@ -88,7 +88,13 @@ void createInitialState(CUDAenv<GaussianThermo> &particles) {
     particles[i].setE(1e-12);
     particles[i].kB = kB;
     particles[i].timestep = 0;
-    particles[i].rmax2 = 20*20;
+    particles[i].rmax2 = 19.6*19.6;
+    particles[i].useNList();
+    /* from the Maxwell-Boltzmann distribution, \f$ <v> = \sqrt {\frac{8k_B T}{\pi m} }\f$
+     * v_ave = Math.sqrt((8 * 8.3145e-7 * 311) / (3.14 * 44.01)) = 0.0038690358024039089145
+     2 * v_ave * 50steps = 0.0038690358024039089145 * 100 = 0.38690358024039089145
+     */
+    particles[i].thickness = 0.4;
   }
 }
 
@@ -157,6 +163,7 @@ int main(int argc, char **argv) {
     static_cast<uint32_t>(100 / delta_t); // 100fs
   const uint32_t initstep = particles[0].timestep;
 
+  const uint32_t neighborListInterval = 100;
 
   // MAIN LOOP
   std::cerr << "start main loop" << std::endl;
@@ -166,7 +173,10 @@ int main(int argc, char **argv) {
 #pragma omp for
     for (int i=0;i<ndev;++i) {
       particles.setGPU(i);
-      particles[i].calcBlockID();
+      if (j%neighborListInterval==0) {
+        particles[i].calcBlockID();
+        particles[i].makeNList();
+      }
 
       particles[i].calcForce();
     }
@@ -198,6 +208,13 @@ int main(int argc, char **argv) {
                   << std::endl;
       particles[i].TimeEvolution(delta_t);
       particles[i].treatPeriodicCondition();
+    }
+
+    // calculate/put energy
+#pragma omp master
+    if ((j+1)%25==0) {
+      std::cerr << "K-P\t" << 
+      particles[0].calcKineticE() << "\t" << particles[0].calcPotentialE() << std::endl;
     }
 
 #pragma omp master

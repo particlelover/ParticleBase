@@ -7,22 +7,28 @@
 
 /** Gaussian Thermostat for the Velocity-Verlet
  *
+ *  @author  Shun Suzuki
+ *  @date    2012 Aug.
+ *  @version @$Id:$
  */
-class GaussianThermo : public virtual cudaParticleMD
-{
+class GaussianThermo : public virtual cudaParticleMD {
 protected:
-  real xi; //!< \f$ \dot{\xi} \f$ term for correction of forces
+  double xi;  //!< \f$ \dot{\xi} \f$ term for correction of forces
 
-  real _e; //!< threshold for the Newton-Raphson in calculating \xi for velocity
+  real _e;  //!< threshold for the Newton-Raphson in calculating \xi for velocity
+
+  double *vd; //<! 1-D vector for the velocity in double precision; size 3N
 
 public:
-  GaussianThermo() : xi(0), _e(1e-8){};
+  GaussianThermo() : xi(0), _e(1e-8) {
+    omitlist.insert(ArrayType::velocity);
+  };
 
   ~GaussianThermo();
 
   /** construct arrays on GPU for n particles
    *
-   * @param n	number of particles
+   * @param n number of particles
    */
   void setup(int n);
 
@@ -42,11 +48,33 @@ public:
    * \f$\dot{\xi}(t)\f$ for the first equation is calculated in previous step
    * and v(t) is calcuated by Newton-Raphson method
    *
-   * @param dt	Delta_t
+   * @param dt  Delta_t
    */
   void TimeEvolution(real dt);
 
   void setE(real _e0) { _e = _e0; };
+
+  void import(const std::vector<ParticleBase> &P);
+
+  /** calculate the \f$ \sum m_i v_i^2 \f$
+   *
+   * @return  3N kB T
+   */
+  real calcMV2(void);
+
+  /** override particleMD::scaleTemp() with double vd[]
+   *
+   * @param Temp  temperature to scale to
+   * @return  scaling factor s
+   */
+  real scaleTemp(real Temp);
+
+  /** override particleMD::adjustVelocities()  with double vd[]
+   *
+   * @param Temp  temperature to fit
+   * @param debug if true, output the mean and variance of particles velocity
+   */
+  void adjustVelocities(real Temp, bool debug=false);
 
 private:
   friend class boost::serialization::access;
@@ -54,31 +82,40 @@ private:
   BOOST_SERIALIZATION_SPLIT_MEMBER()
 #endif
 
-  template <class Archive>
-  void save(Archive &ar, const uint32_t version) const;
+  template<class Archive>
+  void save(Archive& ar, const uint32_t version) const;
 
-  template <class Archive>
-  void load(Archive &ar, const uint32_t version);
+  template<class Archive>
+  void load(Archive& ar, const uint32_t version);
 };
 
-template <class Archive>
-void GaussianThermo::save(Archive &ar, const uint32_t version) const
-{
+template<class Archive>
+void GaussianThermo::save(Archive& ar, const uint32_t version) const {
   ar << boost::serialization::make_nvp("particleMD",
-                                       boost::serialization::base_object<cudaParticleMD>(*this));
+        boost::serialization::base_object<cudaParticleMD>(*this));
 
   ar << boost::serialization::make_nvp("xi", xi);
   ar << boost::serialization::make_nvp("_e", _e);
+
+  std::vector<double> V(N*3, 0.0);
+  cudaMemcpy(&(V[0]), vd, sizeof(double)*N*3, cudaMemcpyDeviceToHost);
+  ar << boost::serialization::make_nvp("velocityD", V);
 }
 
-template <class Archive>
-void GaussianThermo::load(Archive &ar, const uint32_t version)
-{
+template<class Archive>
+void GaussianThermo::load(Archive& ar, const uint32_t version) {
   ar >> boost::serialization::make_nvp("particleMD",
-                                       boost::serialization::base_object<cudaParticleMD>(*this));
+        boost::serialization::base_object<cudaParticleMD>(*this));
 
   ar >> boost::serialization::make_nvp("xi", xi);
   ar >> boost::serialization::make_nvp("_e", _e);
+
+  if (vd!=NULL) cudaFree(vd);
+  cudaMalloc((void **)&vd, sizeof(double)*N*3);
+
+  std::vector<double> V(N*3, 0.0);
+  ar >> boost::serialization::make_nvp("velocityD", V);
+  cudaMemcpy(vd, &(V[0]), sizeof(double)*N*3, cudaMemcpyHostToDevice);
 }
 
 #endif /* GAUSSIANTHERMO */

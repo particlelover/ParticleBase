@@ -5,9 +5,9 @@ import cudaParticles
 if __name__ == "__main__":
     particles = cudaParticles.CudaParticleSPH_NS()
     ndev = particles.nDevices()
-    
+
     if len(sys.argv) == 2:
-	print "reading serialization file ", sys.argv[1]
+        print "reading serialization file ", sys.argv[1]
         particles.setup()
 
         particles.readSerialization(sys.argv[1])
@@ -15,18 +15,9 @@ if __name__ == "__main__":
         print "not supported yet"
         sys.exit()
 
-    
-    B0 = particles[0].numBlocks()
-    B1 = B0 / ndev
-    B2 = 0
-    for i in range(ndev):
-        particles[i].setMyBlock(B2, B1)
-        print "set block range for GPU ", i, ": ", B2, " to ", B2+B1
-        B2 += B1
 
-    if (B1*ndev)!=B0:
-        particles[ndev-1].setMyBlock(B2-B1, B1+(B0-(B1*ndev)))
-        print "correct block range for GPU ", ndev-1, ": ", B2-B1, " to ", B2+(B0-(B1*ndev))
+    for i in range(ndev):
+        particles[i].setBlockRange(particles[i].numBlocks(), ndev, i)
 
 
     particles[0].getTypeID()
@@ -46,7 +37,7 @@ if __name__ == "__main__":
 
 
     for j in range(stepmax):
-        print >> sys.stderr, j, 
+        print >> sys.stderr, j,
         for i in range(ndev):
             particles.setGPU(i)
             particles[i].calcBlockID()
@@ -55,23 +46,14 @@ if __name__ == "__main__":
             particles[i].calcDensity()
 
             particles[i].selectBlocks()
+            particles[i].setSelectedRange(particles[i].numSelectedBlocks(), ndev, i)
 
-
-        _k=0
-        for _n in range(ndev):
-            particles[_n].myOffsetSelected = _k
-            _k += particles[_n].myBlockSelected
-        particles[ndev-1].myBlockSelected += (particles[ndev-1].numSelectedBlocks()-_k)
-            
-
-        for i in range(ndev):
-            particles.setGPU(i)
             particles[i].calcForce()
             particles[i].calcAcceleration()
 
         if ndev>1:
             particles.exchangeAccelerations()
-            
+
         for i in range(ndev):
             particles.setGPU(i)
             particles[i].addAccelerationZ(-9.8e2)
@@ -83,6 +65,6 @@ if __name__ == "__main__":
             particles[0].getPosition()
             particles[0].putTMP()
 
-  
+
     particles.writeSerialization(sys.argv[1])
     print "Done."

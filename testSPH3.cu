@@ -1,33 +1,29 @@
 #include <iostream>
 #include "CUDAenv.hh"
 #include "cudaParticleSPH_NS.hh"
-#include <fstream>
-#include <boost/archive/binary_iarchive.hpp>
-#include <boost/archive/binary_oarchive.hpp>
 
 
-#define SPH_H 0.5
+#define SPH_H 0.4
 
 typedef std::vector<class ParticleBase> GlobalTable;
 
 
 void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
-  /* radius of SPH partciles 0.5
-   * => 4/3 pi 0.5^3 rho = 21; rho = 40.107
-   * 1/l^3 = 40.107; 1/40.107 = l^3
-   * border particles: 1/(0.292^3)
+  const char *XXX="XXX";
+
+  /** read LAMMPS dump file for the ellipsoids
+   *  made by ELpack with atom size 0.6
+   *
    * units of this simulation is:
    * length: cm
    * mass: g
    * time: s
    */
 
-  /* 30x10x15cm box for inner
-   * border thickness SPH_H*4 = 0.292*4=1.168
-   * plus additional space for 1sphere width
-   * 2.168 + inner + 2.168 for each axis
+  /* 40x40x40 box for inner
+   * border thickness SPH_H*4 = 4.8
    */
-  real cell[6] = {-(SPH_H)*5, 30.0+(SPH_H)*5, -(SPH_H)*5, 10.0+(SPH_H)*5, -(SPH_H)*5, 15.0+(SPH_H)*5};
+  real cell[6] = {-(SPH_H)*5, 20.0+(SPH_H)*5, -(SPH_H)*5, 20.0+(SPH_H)*5, -(SPH_H)*5, 30.0+(SPH_H)*5};
   const double lunit = (SPH_H)*0.5938629;
 
   const double rho_0 = 20.0 / (4.0/3.0*M_PI*(SPH_H)*(SPH_H)*(SPH_H));
@@ -39,42 +35,63 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
             << " mean number density = " << rho_0
             << std::endl;
 
-  // 30x10x15 => 103x34x51 lattice
-  // initial 25x34x45 for dam break
-
-  const double lunit_h = lunit / 2;
-  const signed int L1 = 30 / lunit;
-  const signed int L2 = 10 / lunit;
-  const signed int L3 = 15 / lunit;
-
-  const signed int D1 = 6.5 / lunit;
-  const signed int D3 = 13 / lunit;
 
   GlobalTable G1;
-  for (int i=1;i<D1;++i)
-    for (int j=1;j<L2+1;++j)
-      for (int k=1;k<D3;++k) {
-        ParticleBase pb;
-        pb.r[0] = i*lunit+lunit_h;
-        pb.r[1] = j*lunit+lunit_h;
-        pb.r[2] = k*lunit+lunit_h;
-        pb.m = m_0; // 21m/(4/3 pi0.5^3)=1.0g/cm^3
-        pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
-        pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
-        pb.isFixed = false;
-        pb.type = 0;
-        G1.push_back(pb);
-      }
-  uint32_t N1=G1.size();
-  std::cerr << "N= " << N1 << std::endl;
+  {
+    std::ifstream ifil;
+    ifil.open(XXX);
+    if (!ifil.is_open()) {
+      std::cerr << "file 'XXX' not exist" << std::endl;
+      exit(0);
+    }
 
+    std::string D;
+    getline(ifil, D);
+    getline(ifil, D);
+    getline(ifil, D);
+    uint32_t N;
+    ifil >> N;
+    getline(ifil, D);
+    G1.resize(N*2);
 
+    getline(ifil, D);
+    getline(ifil, D);
+    getline(ifil, D);
+    getline(ifil, D);
+    getline(ifil, D);
+
+    for (uint32_t i=0;i<N;++i) {
+      uint32_t p1, p2;
+      double r1, r2, r3;
+      ifil >> p1 >> p2 >> r1 >> r2 >> r3;
+      ParticleBase pb;
+      pb.r[0] = r1;
+      pb.r[1] = r2;
+      pb.r[2] = r3 +(20.0-17.45);
+      pb.m = m_0*2.5;   // x2.5 by water
+      pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
+      pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
+      pb.isFixed = true;
+      pb.type = 2;
+      G1[(p1-1)*2]   = pb;
+      G1[(p1-1)*2+1] = pb;
+    }
+
+    std::cerr << "read " << N << " atoms from " << XXX << std::endl;
+
+    ifil.close();
+  }
+
+  const double lunit_h = lunit / 2;
+  const signed int L = 20 / lunit;
+  const signed int L2 = 10 / lunit;
   // border
-  for (int i=-2;i<L1+4;++i)
-    for (int j=-2;j<L2+4;++j)
-      for (int k=-2;k<L3+4;++k) {
-        if ((i<0)||(L1+1<i) ||
-            (j<0)||(L2+1<j) ||
+  // cell size 40x40x40;
+  for (int i=-2;i<L+2;++i)
+    for (int j=-2;j<L+2;++j)
+      for (int k=-2;k<L+L2;++k) {
+        if ((i<0)||(L+2-3<i) ||
+            (j<0)||(L+2-3<j) ||
             (k<0)) {
           ParticleBase pb;
           pb.r[0] = i*lunit+lunit_h;
@@ -88,14 +105,33 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
           G1.push_back(pb);
         }
       }
+  uint32_t N1=G1.size();
+  std::cerr << "N= " << N1 << std::endl;
+
+
+  for (int i=1;i<L-1;++i)
+    for (int j=1;j<L-1;++j)
+      for (int k=L+5;k<L+L2;++k) {
+        ParticleBase pb;
+        pb.r[0] = i*lunit+lunit_h;
+        pb.r[1] = j*lunit+lunit_h;
+        pb.r[2] = k*lunit+lunit_h;
+        pb.m = m_0; // 21m/(4/3 pi0.5^3)=1.0g/cm^3
+        pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
+        pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
+        pb.isFixed = false;
+        pb.type = 0;
+        G1.push_back(pb);
+      }
   uint32_t N = G1.size();
   std::cerr << "N= " << N << std::endl;
 
 
-  std::valarray<real> mu(8.9e-3, N);
-  mu[std::slice(N1, N-N1, 1)] = 1.0e5;
-  std::valarray<real> c1(1.5e3/2, N);     //1500m/s = 1.5e5 cm/s for water
-  c1[std::slice(N1, N-N1, 1)] = 5.44e3/2; // 5440m/s for glass
+  std::valarray<real> mu(1.0e5, N);
+  mu[std::slice(N1, N-N1, 1)] = 8.9e-3;
+  std::valarray<real> c1(5.44e3/2, N);    //1500m/s = 1.5e5 cm/s for water
+  c1[std::slice(N1, N-N1, 1)] = 1.5e3/2;  // 5440m/s for glass
+
 
   const int ndev = particles.nDevices();
   particles.setup();
@@ -108,6 +144,7 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
     particles[i].timestep = 0;
     particles[i].setSPHProperties(mu, c1, (SPH_H));
     particles[i].setupCutoffBlock((SPH_H), false);
+    particles[i].setupSelectedTMP(N1, N-N1, 0, N1);
   }
   std::cerr << "setup done" << std::endl;
 }
@@ -119,22 +156,13 @@ int main(int argc, char **argv) {
 
   if (argc==2) {
     std::cerr << "reading serialization file " << argv[1] << std::endl;
-    const int ndev = particles.nDevices();
     particles.setup();
-//#pragma omp parallel for
-    for (int i=0;i<ndev;++i) {
-      particles.setGPU(i);
 
-      std::ifstream ifs(argv[1]);
-      boost::archive::binary_iarchive ia(ifs);
-      ia >> boost::serialization::make_nvp("cudaParticles", particles[i]);
-      ifs.close();
-    }
+    particles.readSerialization(argv[1]);
   } else {
     createInitialState(particles);
 
     for (int i=0;i<ndev;++i) {
-      particles.setGPU(i);
       // calculate densities for the first output
       particles[i].calcBlockID();
       particles[i].calcDensity();
@@ -146,14 +174,15 @@ int main(int argc, char **argv) {
   }
 
 
-  particles[0].getTypeID();
-  particles[0].getPosition();
+  particles[0].putUnSelected("SPH3box.dump");
+  particles[0].getSelectedTypeID();
+  particles[0].getSelectedPosition();
   particles[0].putTMP(std::cout);
 
 
-  const real deltaT = 0.000050;
-  const uint32_t stepmax = 0.50 / deltaT;
-  const uint32_t intaval  = 0.00100 / deltaT;
+  const real deltaT = 0.000040;
+  const uint32_t stepmax = 1.20 / deltaT;
+  const uint32_t intaval  = 0.00200 / deltaT;
   const uint32_t initstep = particles[0].timestep;
 
 
@@ -175,14 +204,15 @@ int main(int argc, char **argv) {
       particles.setGPU(i);
       particles[i].calcBlockID();
 
-      particles[i].calcKernels();   // do nothing
-      particles[i].calcDensity();   // calc mass density field and its reciprocal 1/rho
+      particles[i].calcKernels(); // do nothing
+      particles[i].calcDensity(); // calc mass density field and its reciprocal 1/rho
 
       particles[i].selectBlocks();
       particles[i].setSelectedRange(particles[i].numSelectedBlocks(), ndev, i);
-      particles[i].calcForce(); // do nothing
+      particles[i].calcForce();   // do nothing
       particles[i].calcAcceleration();
     }
+
 
     if (ndev>1) {
       particles.exchangeAccelerations();
@@ -196,19 +226,17 @@ int main(int argc, char **argv) {
       particles[i].treatAbsoluteCondition();
     }
 
+
 #pragma omp master
     if ((j+1)%intaval==0) {
       particles[0].timestep = j+1+initstep;
-      particles[0].getPosition();
+      particles[0].getSelectedPosition();
       particles[0].putTMP(std::cout);
     }
   }
 }
 
-  std::ofstream ofs("SPH2done");
-  boost::archive::binary_oarchive oa(ofs);
-  oa << boost::serialization::make_nvp("cudaParticles", particles[0]);
-  ofs.close();
+  particles.writeSerialization("SPH3done");
 
   return 0;
 }

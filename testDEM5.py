@@ -11,10 +11,11 @@ def createInitialState(particles):
     ## [g][cm][s]
     R0 = 0.50
     lunit = 2 * R0
-    L1 = 65.0
-    L2 = 65.0
+    L1 = 60.0
+    L2 = 60.0
     L3 = 10.0
-    L4 = 60.0
+    L4 = 50.0
+    L5 = 20.0
 
     cell = cudaParticles.new_realArray(6)
     cudaParticles.realArray_setitem(cell, 0, 0.0)
@@ -66,9 +67,8 @@ def createInitialState(particles):
 
 
     # moving
-    P1 = int(25 / lunit / 1.3)
+    P1 = int(L5 / lunit / 1.3)
     P2 = int(L4 / lunit - 2)
-    _l = 0
 
     for k in range(P2):
         for i in range(P1):
@@ -77,15 +77,14 @@ def createInitialState(particles):
                 pb_r = carray3_t.from_address(int(pb.r))
                 pb_v = carray3_t.from_address(int(pb.v))
                 pb_a = carray3_t.from_address(int(pb.a))
-                pb_r[0] = (i*1.3)*lunit + random.gauss(0.0, R0/25.0) + 20.0
-                pb_r[1] = (j*1.3)*lunit + random.gauss(0.0, R0/25.0) + 20.0
+                pb_r[0] = (i*1.3)*lunit + random.gauss(0.0, R0/10.0) + L5
+                pb_r[1] = (j*1.3)*lunit + random.gauss(0.0, R0/10.0) + L5
                 pb_r[2] = (k+1  )*lunit + lunit/3
-                pb.m = (WeighFe * (0.8*0.8*0.8)) if (j>N1) and ((j-N1)%3==0) else WeighFe
+                pb.m = WeighFe
                 pb_v[0] = pb_v[1] = pb_v[2] = 0.0
                 pb_a[0] = pb_a[1] = pb_a[2] = 0.0
                 pb.isFixed = False
-                pb.type = 1 if (_l % 3) == 0 else 2
-                _l = _l + 1
+                pb.type = 1
                 G1.push_back(pb)
 
     N = G1.size()
@@ -103,12 +102,9 @@ def createInitialState(particles):
 
         particles[i]._import(G1)
 
-        rad = cudaParticles.VectorReal(N)
-        for j in range(N):
-            rad[j] = R0 * 0.8 if (j>N1) and ((j-N1)%3==0) else R0
-        particles[i].setDEMProperties(2.11e07, 0.40, 0.29, 0.10332, 0.10, rad)
-        particles[i].setInertia(rad)
-        particles[i].setupCutoffBlock(R0*2, False)
+        particles[i].setDEMProperties(2.11e10, 0.40, 0.29, 0.10332, 0.10, R0)
+        particles[i].setInertia(R0)
+        particles[i].setupCutoffBlock(R0*2/math.sqrt(3.0)*0.9, False)
 
         # putTMPselected
         particles[i].setupSelectedTMP(N1, N-N1, 0, N1)
@@ -141,15 +137,19 @@ if __name__ == "__main__":
     particles[0].getSelectedTypeID()
     particles[0].getSelectedPosition()
     particles[0].putTMP()
+    particles[0].waitPutTMP()
 
 
     stepmax  = 1.50
     intaval  = 0.005
     initstep = particles[0].timestep
     initDeltaT = 0.000008
-
-    R0 = 0.40
+    ulim = 0.01 * 4
+    llim = ulim / 16.0
+    R0 = 0.50
     res = cudaParticles.VectorInt(ndev)
+
+    param_g = 9.8e2
 
     thistime = cudaParticles.AdaptiveTimeDEM()
     nextoutput = intaval
@@ -186,16 +186,16 @@ if __name__ == "__main__":
         for i in range(ndev):
             particles.setGPU(i)
             particles[i].calcAcceleration()
-            particles[i].addAccelerationZ(-9.8e2)
+            particles[i].addAccelerationZ(-param_g)
             particles[i].TimeEvolution(thistime.currentDeltaT())
-            res[i] = particles[i].inspectVelocity((2*R0)/thistime.currentDeltaT(), 0.01, 0.01/16.0)
+            res[i] = particles[i].inspectVelocity((2*R0)/thistime.currentDeltaT(), ulim, llim)
 
         j = thistime.Progress(particles, res, j)
 
 
         for i in range(ndev):
             particles.setGPU(i)
-            particles[i].treatAbsoluteCondition()
+            particles[i].treatRefrectCondition()
 
         if thistime() >= nextoutput:
             print >> sys.stderr, "({})".format(thistime())
@@ -204,6 +204,7 @@ if __name__ == "__main__":
             particles[0].getSelectedPosition()
             particles[0].putTMP()
 
+    particles[0].waitPutTMP()
     thistime.PrintStat(j)
 
     particles.writeSerialization("DEM5donepy")

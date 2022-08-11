@@ -1,41 +1,25 @@
 #include "CUDAenv.hh"
 #include <cuda_runtime_api.h>
 
-int numberOfCores(int major, int minor)
-{
+
+int numberOfCores(int major, int minor) {
   int N = 0;
-  if (major == 1)
-  {
-    if ((minor == 0) || (minor == 1) || (minor == 2) || (minor == 3))
-      N = 8;
-  }
-  else if (major == 2)
-  {
-    if (minor == 0)
-      N = 32;
-    else if (minor == 1)
-      N = 48;
-  }
-  else if (major == 3)
-  {
+  if (major == 1) {
+    if ((minor == 0) || (minor == 1) || (minor == 2) || (minor == 3)) N = 8;
+  } else if (major == 2) {
+    if (minor == 0) N = 32;
+    else if (minor == 1) N = 48;
+  } else if (major == 3) {
     N = 192;
-  }
-  else if (major == 5)
-  {
+  } else if (major == 5) {
     N = 128;
-  }
-  else if (major == 5)
-  {
-    if (minor == 0)
-      N = 64;
-    else
-      N = 128;
-  }
-  else
-  {
+  } else if (major == 5) {
+    if (minor == 0) N = 64;
+    else N = 128;
+  } else {
     std::cerr << "unsupported version:" << major << "." << minor << std::endl;
   }
-  /*
+    /*
     // modefied from NVIDIA_GPU_Computing_SDK/common/inc/helper_cuda_drvapi.h
         sSMtoCores nGpuArchCoresPerSM[] = 
         { { 0x10,  8 }, // Tesla Generation (SM 1.0) G80 class

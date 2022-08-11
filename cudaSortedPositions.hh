@@ -3,17 +3,24 @@
 
 #include "cudaCutoffBlock.hh"
 
-class cudaSortedPositions : virtual public cudaCutoffBlock
-{
+class cudaSortedPositions: virtual public cudaCutoffBlock {
 protected:
-  real *r_s;                //!< positions sorted by bid
+  float4 *r_s;  //!< positions sorted by bid
   unsigned short *typeID_s; //!< typeid sorted by bid
 
-  template <class Archive>
-  void load(Archive &ar, const uint32_t version);
+  void reset(void) {
+    if (resizeInLoad) {
+      if (typeID_s!=NULL) cudaFree(typeID_s);
+      if (r_s!=NULL)      cudaFree(r_s);
+      cudaMalloc((void **)&r_s, sizeof(float4)*N);
+      cudaMalloc((void **)&typeID_s, sizeof(unsigned short int)*N);
+    }
+  };
 
 public:
-  cudaSortedPositions() : r_s(NULL), typeID_s(NULL){};
+  cudaSortedPositions() :
+    r_s(NULL), typeID_s(NULL)
+  {};
 
   ~cudaSortedPositions();
 
@@ -26,19 +33,4 @@ public:
    */
   void calcBlockID(void);
 };
-
-template <class Archive>
-void cudaSortedPositions::load(Archive &ar, const uint32_t version)
-{
-
-  if (resizeInLoad)
-  {
-    if (typeID_s != NULL)
-      cudaFree(typeID_s);
-    if (r_s != NULL)
-      cudaFree(r_s);
-    cudaMalloc((void **)&r_s, sizeof(real) * 3 * N);
-    cudaMalloc((void **)&typeID_s, sizeof(unsigned short int) * N);
-  }
-}
 #endif

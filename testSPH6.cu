@@ -2,11 +2,7 @@
 #include "CUDAenv.hh"
 #include "cudaParticleSPH_NS.hh"
 #include <fstream>
-#include <boost/archive/binary_iarchive.hpp>
-#include <boost/archive/binary_oarchive.hpp>
-
-
-#define SPH_H 0.5
+#include <random>
 
 typedef std::vector<class ParticleBase> GlobalTable;
 
@@ -22,84 +18,102 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
    * time: s
    */
 
-  /* 40x10x40cm box for L-shaped
-   * border thickness SPH_H*4 = 0.292*4=1.168
-   * plus additional space for 1sphere width
-   * 2.168 + inner + 2.168 for each axis
-   */
-  real cell[6] = {-(SPH_H)*5, 50.0+(SPH_H)*5, -(SPH_H)*5, 8.0+(SPH_H)*5, -(SPH_H)*5, 50.0+(SPH_H)*5};
-  const double lunit = (SPH_H)*0.5938629;
+  std::mt19937 engine;
 
-  const double rho_0 = 20.0 / (4.0/3.0*M_PI*(SPH_H)*(SPH_H)*(SPH_H));
+  GlobalTable G1;
+  const double lunit = 0.4;
+  const double sph_h = lunit / 0.5938629;
+  real cell[6] = {0, 20, 0, 20, 0, 25};
+
+  const double rho_0 = 20.0 / (4.0/3.0*M_PI*(sph_h)*(sph_h)*(sph_h));
   const double m_0 = 1.0 / rho_0;
-    // 0.9799 for 20m/(4/3 pi1.7^3)=1.0g/cm^3
+  // 0.9799 for 20m/(4/3 pi1.7^3)=1.0g/cm^3
 
-  std::cerr << "SPH kernel h = " << (SPH_H)
+  std::cerr << "SPH kernel h = " << (sph_h)
             << " lunit = " << lunit
             << " mean number density = " << rho_0
             << std::endl;
 
-  // 50x8x50 L-shaped
 
+  const signed int L1 = 20 / lunit - 1;
+  const signed int L2 = 20 / lunit - 1;
+  const signed int L3 = 25 / lunit - 1;
   const double lunit_h = lunit / 2;
-  const signed int L1 = 50 / lunit;
-  const signed int L2 = 8  / lunit;
-  const signed int L3 = 50 / lunit;
 
-  GlobalTable G1;
-  for (int i=1;i<L1;++i)
-    for (int j=1;j<L2+1;++j)
-      for (int k=1;k<L2+1;++k) {
+  const signed int H5 = 5 / lunit - 1;
+  const signed int H10 = 10 / lunit - 1;
+  const signed int H15 = 15 / lunit - 1;
+
+  /*
+   * border: 20x20x25 cm box
+   */
+  for (int i=0;i<L3;++i)
+    for (int j=0;j<L2;++j)
+      for (int k=0;k<L1;++k) {
         // i: Z, j: Y, k: X
-        ParticleBase pb;
-        pb.r[0] = k*lunit+lunit_h;
-        pb.r[1] = j*lunit+lunit_h;
-        pb.r[2] = i*lunit+lunit_h;
-        pb.m = m_0; // 21m/(4/3 pi0.5^3)=1.0g/cm^3
-        pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
-        pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
-        pb.isFixed = false;
-        pb.type = 0;
-        G1.push_back(pb);
+        if (
+          ((i==0) && (j<L2/2) && (k<L1/2)) ||
+          ((i==H5) && (j<L2/2) && (k>=L1/2)) ||
+          ((i==H10 && (j>=L2/2) && (k>=L1/2))) ||
+          ((i==H15 && (j>=L2/2) && (k<L1/2))) || // floor
+          ((k==0) && (j<L2/2)) ||
+          ((k==0) && (j>=L2/2) && (i>=H15)) ||
+          ((k==L1-1) && (j<L2/2) && (i>=H5)) ||
+          ((k==L1-1) && (j>=L2/2) && (i>=H10)) ||
+          ((j==0) && (k<L1/2)) ||
+          ((j==0) && (k>=L1/2) && (i>=H5)) ||
+          ((j==L2-1) && (k<L1/2) && (i>=H15)) ||
+          ((j==L2-1) && (k>=L1/2) && (i>=H10)) || // wall
+          ((j==L2/2) && (k<L1/2)) ||
+          ((j==L2/2) && (k>=L1/2) && (i>=H5) && (i<H10)) ||
+          ((k==L1/2) && (j<L2/2) && (i<H5)) ||
+          ((k==L1/2) && (j>=L2/2) && (i>=H10) && (i<H15))
+        ) {
+          for (int l=0;l<2;++l) { // two border particles set on same position
+            ParticleBase pb;
+            pb.r[0] = k*lunit+lunit_h;
+            pb.r[1] = j*lunit+lunit_h;
+            pb.r[2] = i*lunit+lunit_h;
+            pb.m = m_0*2.5; // x2.5 by water
+            pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
+            pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
+            pb.isFixed = true;
+            pb.type = 0;
+            G1.push_back(pb);
+          }
+        }
       }
   uint32_t N1=G1.size();
   std::cerr << "N= " << N1 << std::endl;
 
-
-  // border
-  for (int i=-2;i<L1+4;++i)
-    for (int j=-2;j<L2+4;++j)
-      for (int k=-2;k<L3+4;++k) {
+  /*
+   * fluid particles
+   */
+  // wall position Y:L2/2, L2; X:0, L1/2
+  std::normal_distribution<> s1(0.0, lunit_h / 50.0);
+   for (int i=H15+2;i<L3;++i)
+    for (int j=L2/2+2;j<L2-1;++j)
+      for (int k=2;k<L1/2-1;++k) {
         // i: Z, j: Y, k: X
-        if (
-          (i<0) ||
-          ((L2+1<i)&&(i<L2+4)&&(L2+1<k)) ||
-          ((j<0)&&((k<L2+4)||(i<L2+4))) ||
-          ((L2+1<j)&&((k<L2+4)||(i<L2+4))) ||
-          (k<0) ||
-          (((L2+1<k)&&(k<L2+4))&&(L2+1<i)) ||
-          ((L3+1<k)&&(i<L2+4))
-          ) {
-          ParticleBase pb;
-          pb.r[0] = k*lunit+lunit_h;
-          pb.r[1] = j*lunit+lunit_h;
-          pb.r[2] = i*lunit+lunit_h;
-          pb.m = m_0*2.5;   // x2.5 by water
-          pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
-          pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
-          pb.isFixed = true;
-          pb.type = 1;
-          G1.push_back(pb);
-        }
+        ParticleBase pb;
+        pb.r[0] = k*lunit + s1(engine);
+        pb.r[1] = j*lunit + s1(engine);
+        pb.r[2] = i*lunit + s1(engine);
+        pb.m = m_0; // 21m/(4/3 pi0.5^3)=1.0g/cm^3
+        pb.v[0] = pb.v[1] = pb.v[2] = 0.0;
+        pb.a[0] = 0.0; pb.a[1] = 0.0; pb.a[2] = 0.0;
+        pb.isFixed = false;
+        pb.type = 1;
+        G1.push_back(pb);
       }
   uint32_t N = G1.size();
   std::cerr << "N= " << N << std::endl;
 
 
   std::valarray<real> mu(8.9e-3, N);
-  mu[std::slice(N1, N-N1, 1)] = 1.0e5;
+  mu[std::slice(0, N1, 1)] = 1.0e5;
   std::valarray<real> c1(1.5e3/2, N);   //1500m/s = 1.5e5 cm/s for water
-  c1[std::slice(N1, N-N1, 1)] = 5.44e3/2; // 5440m/s for glass
+  c1[std::slice(0, N1, 1)] = 5.44e3/2;  // 5440m/s for glass
 
   const int ndev = particles.nDevices();
   particles.setup();
@@ -110,15 +124,16 @@ void createInitialState(CUDAenv<cudaParticleSPH_NS> &particles) {
     particles[i].setCell(cell);
     particles[i].import(G1);
     particles[i].timestep = 0;
-    particles[i].setSPHProperties(mu, c1, (SPH_H));
-    particles[i].setupCutoffBlock((SPH_H), false);
+    particles[i].setSPHProperties(mu, c1, (sph_h));
+    particles[i].setupCutoffBlock((sph_h), false);
+
+    // putTMPselected
+    particles[i].setupSelectedTMP(N1, N-N1, 0, N1);
+    std::cerr << "particles, moving= " << N-N1 << " total= " << N << std::endl;
   }
   std::cerr << "setup done" << std::endl;
 
-
-  // putTMPselected
-  particles[0].setupSelectedTMP(0, N1, N1, N-N1);
-  particles[0].putUnSelected("dump.SPH4box");
+  particles[0].putUnSelected("dump.SPH6box");
 }
 
 
@@ -128,17 +143,9 @@ int main(int argc, char **argv) {
 
   if (argc==2) {
     std::cerr << "reading serialization file " << argv[1] << std::endl;
-    const int ndev = particles.nDevices();
     particles.setup();
-//#pragma omp parallel for
-    for (int i=0;i<ndev;++i) {
-      particles.setGPU(i);
 
-      std::ifstream ifs(argv[1]);
-      boost::archive::binary_iarchive ia(ifs);
-      ia >> boost::serialization::make_nvp("cudaParticles", particles[i]);
-      ifs.close();
-    }
+    particles.readSerialization(argv[1]);
   } else {
     createInitialState(particles);
 
@@ -162,9 +169,10 @@ int main(int argc, char **argv) {
   particles[0].putTMP(std::cout);
 
   const real deltaT = 0.000050;
-  const uint32_t stepmax = 0.50 / deltaT;
-  const uint32_t intaval  = 0.00200 / deltaT;
+  const uint32_t stepmax  = 1.50 / deltaT;
+  const uint32_t intaval  = 0.005 / deltaT;
   const uint32_t initstep = particles[0].timestep;
+
 
 #pragma omp parallel num_threads(ndev)
 {
@@ -177,7 +185,7 @@ int main(int argc, char **argv) {
   for (uint32_t j=0;j<stepmax;++j) {
 #pragma omp master
     {
-      std::cerr << j << " ";
+      if (j%50==0) std::cerr << j << " ";
     }
 #pragma omp for
     for (int i=0;i<ndev;++i) {
@@ -188,7 +196,6 @@ int main(int argc, char **argv) {
       particles[i].calcKernels();   // do nothing
       particles[i].calcDensity(true); // calc mass density field and its reciprocal 1/rho
     }
-
     if (ndev>1) {
       particles.exchangeForceSelected(ExchangeMode::density); // exchange density
     }
@@ -202,7 +209,6 @@ int main(int argc, char **argv) {
       particles[i].calcAcceleration(true);
       particles[i].getExchangePidRange2();  // obtain pid range [p3, p4)
     }
-
     if (ndev>1) {
       particles.exchangeForceSelected(ExchangeMode::acceleration); // exchange acceleration
     }
@@ -226,10 +232,7 @@ int main(int argc, char **argv) {
   }
 }
 
-  std::ofstream ofs("SPH4done");
-  boost::archive::binary_oarchive oa(ofs);
-  oa << boost::serialization::make_nvp("cudaParticles", particles[0]);
-  ofs.close();
+  particles.writeSerialization("SPH6done");
 
   return 0;
 }
